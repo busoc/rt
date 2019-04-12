@@ -13,6 +13,8 @@ import (
 
 const TimeFormat = "2006-01-02 15:04:05.000"
 
+type MatchFunc func([]byte) bool
+
 type TruncatedError int
 
 func (e TruncatedError) Error() string {
@@ -55,12 +57,14 @@ func (g *Gap) Missing() int {
 }
 
 type Reader struct {
+	match  MatchFunc
 	inner  *bufio.Reader
 	needed int
 }
 
 func NewReader(r io.Reader) *Reader {
 	var rs Reader
+	rs.match = func([]byte) bool { return true }
 	rs.Reset(r)
 	return &rs
 }
@@ -89,7 +93,11 @@ func (r *Reader) Read(xs []byte) (int, error) {
 	if len(xs) < r.needed {
 		return 0, io.ErrShortBuffer
 	}
-	return io.ReadFull(r.inner, xs[:r.needed])
+	n, err := io.ReadFull(r.inner, xs[:r.needed])
+	if !r.match(xs[4 : 4+256]) {
+		return r.Read(xs)
+	}
+	return n, err
 }
 
 type writer struct {
