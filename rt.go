@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"time"
@@ -105,6 +106,49 @@ func (w *writer) Write(xs []byte) (int, error) {
 		return 0, err
 	}
 	return w.Writer.Write(xs)
+}
+
+type splitWriter struct {
+	closers []io.Closer
+	writers []io.Writer
+}
+
+func Split(dir string, n int) (io.WriteCloser, error) {
+	if n <= 1 {
+		n = 2
+	}
+	ws := make([]io.Writer, n)
+	cs := make([]io.Closer, n)
+	for i := 0; i < n; i++ {
+		w, err := os.Create(filepath.Join(dir, fmt.Sprintf("rt_%04d.dat", i+1)))
+		if err != nil {
+			return nil, err
+		}
+		cs[i] = w
+		ws[i] = NewWriter(w)
+	}
+	s := splitWriter{
+		writers: ws,
+		closers: cs,
+	}
+	return &s, nil
+}
+
+func (s *splitWriter) Write(bs []byte) (int, error) {
+	i := rand.Intn(len(s.writers))
+	n, err := s.writers[i].Write(bs[4:])
+	n += 4
+	return n, err
+}
+
+func (s *splitWriter) Close() error {
+	var err error
+	for i := 0; i < len(s.closers); i++ {
+		if e := s.closers[i].Close(); e != nil {
+			err = e
+		}
+	}
+	return err
 }
 
 type multiReader struct {
