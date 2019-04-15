@@ -22,6 +22,11 @@ func (e TruncatedError) Error() string {
 }
 
 type Coze struct {
+	First     uint64
+	Last      uint64
+	StartTime time.Time
+	EndTime   time.Time
+
 	Id      int    `json:"id"`
 	Size    uint64 `json:"bytes"`
 	Count   uint64 `json:"count"`
