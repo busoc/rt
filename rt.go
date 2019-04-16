@@ -13,6 +13,8 @@ import (
 
 const TimeFormat = "2006-01-02 15:04:05.000"
 
+const Five = 5 * time.Minute
+
 type MatchFunc func([]byte) bool
 
 type TruncatedError int
@@ -59,6 +61,22 @@ func (g *Gap) Missing() int {
 		d = -d
 	}
 	return d - 1
+}
+
+func Path(base string, t time.Time) (string, error) {
+	t = t.Truncate(Five)
+
+	year := fmt.Sprintf("%04d", t.Year())
+	doy := fmt.Sprintf("%04d", t.YearDay())
+	hour := fmt.Sprintf("%04d", t.Hour())
+
+	dir := filepath.Join(base, year, doy, hour)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	min := t.Minute()
+	file := fmt.Sprintf("rt_%02d_%02d.dat", min, min+4)
+	return filepath.Join(dir, file), nil
 }
 
 type Reader struct {
