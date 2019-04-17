@@ -13,7 +13,7 @@ import (
 
 const TimeFormat = "2006-01-02 15:04:05.000"
 
-const Five = 5 * time.Minute
+const Five = 5*time.Minute
 
 type MatchFunc func([]byte) bool
 
@@ -63,6 +63,15 @@ func (g *Gap) Missing() int {
 	return d - 1
 }
 
+type Offset struct {
+	Pid      uint
+	Time     time.Time
+	Sequence uint
+
+	Size     int
+	Position int64
+}
+
 func Path(base string, t time.Time) (string, error) {
 	t = t.Truncate(Five)
 
@@ -71,7 +80,7 @@ func Path(base string, t time.Time) (string, error) {
 	hour := fmt.Sprintf("%04d", t.Hour())
 
 	dir := filepath.Join(base, year, doy, hour)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0755); err !=nil {
 		return "", err
 	}
 	min := t.Minute()

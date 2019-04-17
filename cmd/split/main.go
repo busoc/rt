@@ -21,6 +21,10 @@ func main() {
 	}
 	defer f.Close()
 
+	if err := os.MkdirAll(*datadir, 0755); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	w, err := rt.Split(*datadir, *part)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
