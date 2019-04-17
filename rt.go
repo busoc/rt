@@ -2,6 +2,7 @@ package rt
 
 import (
 	"bufio"
+	"errors"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"time"
 )
+
+var ErrSkip = errors.New("skip")
 
 const TimeFormat = "2006-01-02 15:04:05.000"
 
@@ -70,6 +73,47 @@ type Offset struct {
 
 	Size     int
 	Position int64
+}
+
+type Merger struct {
+	get func([]byte) (Offset, error)
+	index []Offset
+	written int64
+
+	inner *os.File
+}
+
+func (m *Merger) Read(bs []byte) (int, error) {
+	return len(bs), nil
+}
+
+func (m *Merger) Write(bs []byte) (int, error) {
+	switch o, err := m.get(bs); err {
+	case nil:
+		o.Size = len(bs)
+		o.Position = m.written
+	case ErrSkip:
+		return len(bs), nil
+	default:
+		return 0, err
+	}
+	n, err := m.inner.Write(bs)
+	if err == nil {
+		m.written += n
+	}
+	return n, err
+}
+
+func (m *Merger) Close() error {
+	err := m.inner.Close()
+	if e := os.Remove(m.inner.Name()); e != nil {
+		err = e
+	}
+	return err
+}
+
+func Merge(f func([]byte) (Offset, error)) *Merger {
+	return &Merger{}
 }
 
 func Path(base string, t time.Time) (string, error) {
