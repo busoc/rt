@@ -6,9 +6,11 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 )
 
@@ -71,8 +73,18 @@ type Offset struct {
 	Time     time.Time
 	Sequence uint
 
-	Size     int
-	Position int64
+	size     int
+	position int64
+}
+
+func (o Offset) Less(other Offset) bool {
+	if o.Time.Equal(other.Time) {
+		if o.Pid == other.Pid {
+			return o.Sequence < other.Sequence
+		}
+		return o.Pid < other.Pid
+	}
+	return o.Time.Before(other.Time)
 }
 
 type Merger struct {
@@ -83,15 +95,77 @@ type Merger struct {
 	inner *os.File
 }
 
+func MergeFiles(files []string, w io.Writer, f func([]byte) (Offset, error)) error {
+	rs := make([]io.Reader, len(files))
+	for i := 0; i < len(rs); i++ {
+		r, err := os.Open(files[i])
+		if err != nil {
+			return err
+		}
+		defer r.Close()
+		rs[i] = r
+	}
+	m, err := NewMerger(f)
+	if err != nil {
+		return err
+	}
+	defer m.Close()
+
+	buffer := make([]byte, 8<<20)
+	r := NewReader(io.MultiReader(rs...))
+
+	if _, err = io.CopyBuffer(m, r, buffer); err != nil {
+		return err
+	}
+	if err := m.Reset(); err != nil {
+		return err
+	}
+	_, err = io.CopyBuffer(w, m, buffer)
+	return err
+}
+
+func NewMerger(get func([]byte) (Offset, error)) (*Merger, error) {
+	if get == nil {
+		return nil, fmt.Errorf("merger: needs a valid func")
+	}
+	f, err := ioutil.TempFile("", "merge_*.dat")
+	if err != nil {
+		return nil, err
+	}
+	return &Merger{inner: f, get: get}, nil
+}
+
+func (m *Merger) Reset() error {
+	sort.Slice(m.index, func(i, j int) bool {
+		return m.index[i].Less(m.index[j])
+	})
+	_, err := m.inner.Seek(0, io.SeekStart)
+	return err
+}
+
 func (m *Merger) Read(bs []byte) (int, error) {
-	return len(bs), nil
+	if len(m.index) == 0 {
+		return 0, io.EOF
+	}
+	o := m.index[0]
+	if _, err := m.inner.Seek(o.position, io.SeekStart); err != nil {
+		return 0, err
+	}
+	if len(bs) < o.size {
+		return 0, io.ErrShortBuffer
+	}
+	n, err := m.inner.Read(bs[:o.size])
+	if err == nil {
+		m.index = m.index[1:]
+	}
+	return n, err
 }
 
 func (m *Merger) Write(bs []byte) (int, error) {
 	switch o, err := m.get(bs); err {
 	case nil:
-		o.Size = len(bs)
-		o.Position = m.written
+		o.position, o.size = m.written, len(bs)
+		m.index = append(m.index, o)
 	case ErrSkip:
 		return len(bs), nil
 	default:
@@ -99,7 +173,7 @@ func (m *Merger) Write(bs []byte) (int, error) {
 	}
 	n, err := m.inner.Write(bs)
 	if err == nil {
-		m.written += n
+		m.written += int64(n)
 	}
 	return n, err
 }
@@ -110,10 +184,6 @@ func (m *Merger) Close() error {
 		err = e
 	}
 	return err
-}
-
-func Merge(f func([]byte) (Offset, error)) *Merger {
-	return &Merger{}
 }
 
 func Path(base string, t time.Time) (string, error) {
