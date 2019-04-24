@@ -72,12 +72,18 @@ type Offset struct {
 	Pid      uint
 	Time     time.Time
 	Sequence uint
+	Len      uint
+
+	Cmp func(Offset, Offset) bool
 
 	size     int
 	position int64
 }
 
 func (o Offset) Less(other Offset) bool {
+	if o.Cmp != nil {
+		return o.Cmp(o, other)
+	}
 	if o.Time.Equal(other.Time) {
 		if o.Pid == other.Pid {
 			return o.Sequence < other.Sequence
