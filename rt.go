@@ -2,8 +2,8 @@ package rt
 
 import (
 	"bufio"
-	"errors"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -18,7 +18,7 @@ var ErrSkip = errors.New("skip")
 
 const TimeFormat = "2006-01-02 15:04:05.000"
 
-const Five = 5*time.Minute
+const Five = 5 * time.Minute
 
 type MatchFunc func([]byte) bool
 
@@ -39,6 +39,17 @@ type Coze struct {
 	Count   uint64 `json:"count"`
 	Missing uint64 `json:"missing"`
 	Error   uint64 `json:"error"`
+}
+
+func (c *Coze) Reset() {
+	c.Size = 0
+	c.Count = 0
+	c.Error = 0
+	c.Missing = 0
+	c.First = 0
+	c.Last = 0
+	c.StartTime = time.Time{}
+	c.EndTime = time.Time{}
 }
 
 func (c *Coze) Update(o *Coze) {
@@ -94,8 +105,8 @@ func (o Offset) Less(other Offset) bool {
 }
 
 type Merger struct {
-	get func([]byte) (Offset, error)
-	index []Offset
+	get     func([]byte) (Offset, error)
+	index   []Offset
 	written int64
 
 	inner *os.File
@@ -200,7 +211,7 @@ func Path(base string, t time.Time) (string, error) {
 	hour := fmt.Sprintf("%04d", t.Hour())
 
 	dir := filepath.Join(base, year, doy, hour)
-	if err := os.MkdirAll(dir, 0755); err !=nil {
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
 	min := t.Minute()
