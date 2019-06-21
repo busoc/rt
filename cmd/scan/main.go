@@ -19,22 +19,23 @@ func main() {
 	}
 	defer mr.Close()
 
-	buffer := make([]byte, 8<<20)
-
-	var size, invalid int
+	var (
+		size int
+		bad  int
+		rs   = rt.NewReader(mr)
+		buf  = make([]byte, 8<<20)
+	)
 	for i := 1; ; i++ {
-		n, err := mr.Read(buffer)
-		if n > 0 {
-			size += n - 4
-		}
+		n, err := rs.Read(buf)
 		switch err {
 		case nil:
-		case io.EOF:
-			fmt.Printf("%d packets (%d invalid, %dKB)\n", i-1, invalid, size>>10)
+			size += n - 4
+		case io.EOF, rt.ErrInvalid:
+			fmt.Printf("%d packets (%d invalid, %dKB)\n", i-1, bad, size>>10)
 			return
 		default:
 			i--
-			invalid++
+			bad++
 		}
 	}
 }

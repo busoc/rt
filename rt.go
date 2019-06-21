@@ -223,8 +223,9 @@ func Path(base string, t time.Time) (string, error) {
 }
 
 type Reader struct {
+	inner *bufio.Reader
+
 	match  MatchFunc
-	inner  *bufio.Reader
 	needed int
 }
 
@@ -251,14 +252,17 @@ func (r *Reader) Read(xs []byte) (int, error) {
 	if r.inner == nil {
 		return 0, nil
 	}
+
 	tmp, err := r.inner.Peek(4)
 	if err != nil {
 		return 0, err
 	}
+
 	r.needed = int(binary.LittleEndian.Uint32(tmp)) + 4
 	if len(xs) < r.needed {
-		return 0, ErrInvalid //, io.EOF
+		return 0, ErrInvalid
 	}
+
 	n, err := io.ReadFull(r.inner, xs[:r.needed])
 	if !r.match(xs[4 : 4+256]) {
 		return r.Read(xs)
