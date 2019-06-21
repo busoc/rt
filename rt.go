@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-var ErrSkip = errors.New("skip")
+var (
+	ErrSkip    = errors.New("skip")
+	ErrInvalid = errors.New("invalid")
+)
 
 const TimeFormat = "2006-01-02 15:04:05.000"
 
@@ -254,7 +257,7 @@ func (r *Reader) Read(xs []byte) (int, error) {
 	}
 	r.needed = int(binary.LittleEndian.Uint32(tmp)) + 4
 	if len(xs) < r.needed {
-		return 0, io.ErrShortBuffer
+		return 0, ErrInvalid //, io.EOF
 	}
 	n, err := io.ReadFull(r.inner, xs[:r.needed])
 	if !r.match(xs[4 : 4+256]) {
