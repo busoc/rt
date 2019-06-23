@@ -262,7 +262,7 @@ func (r *Reader) Read(xs []byte) (int, error) {
 	r.needed = int(binary.LittleEndian.Uint32(xs)) + 4
 	if len(xs) < r.needed {
 		if d, ok := r.inner.(*multiReader); ok {
-			if err := d.Discard(); err == nil {
+			if err := d.closeAndOpen(); err == nil {
 				return r.Read(xs)
 			} else {
 				return 0, ErrInvalid
@@ -295,8 +295,7 @@ func Browse(files []string, recurse bool) (io.ReadCloser, error) {
 	return &r, nil
 }
 
-func (m *multiReader) Discard() error {
-	io.Copy(ioutil.Discard, m.inner)
+func (m *multiReader) closeAndOpen() error {
 	m.inner.Close()
 
 	f, err := m.openFile()
@@ -310,8 +309,7 @@ func (m *multiReader) Read(xs []byte) (int, error) {
 	n, err := m.inner.Read(xs)
 	if err != nil {
 		if err == io.EOF {
-			m.inner.Close()
-			m.inner, err = m.openFile()
+			err = m.closeAndOpen()
 			if err == nil {
 				return m.Read(xs)
 			}
