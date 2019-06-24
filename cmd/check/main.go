@@ -94,11 +94,7 @@ func (d *dumper) Dump(s state, i os.FileInfo, p string) {
 		d.line.AppendString(str, 6, linewriter.AlignLeft)
 	}
 	if d.csv || !d.pretty {
-		flag := linewriter.AlignRight
-		if !d.csv {
-			flag |= linewriter.NoSeparator
-		}
-		d.line.AppendInt(s.Size, 13, flag)
+		d.line.AppendInt(s.Size, 13, linewriter.AlignRight|linewriter.NoSeparator)
 		d.line.AppendInt(missing, 13, linewriter.AlignRight)
 	} else {
 		d.line.AppendSize(s.Size, 9, linewriter.AlignRight|linewriter.NoSeparator)
