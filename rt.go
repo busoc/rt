@@ -277,7 +277,7 @@ func (r *Reader) Read(xs []byte) (int, error) {
 		return r.Read(xs)
 	}
 
-	return n, err
+	return n + 4, err
 }
 
 type multiReader struct {
