@@ -86,7 +86,7 @@ func (b *Builder) Open(pid int, when time.Time) (*os.File, error) {
 		if _, ok := b.files[p]; !ok {
 			b.files[p]++
 		}
-		p += fmt.Sprintf(".%d", b.files[p])
+		p = fmt.Sprintf("%s.%d", p, b.files[p])
 	}
 
 	return os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -97,21 +97,19 @@ func (b *Builder) prepare(pid int, when time.Time) (string, error) {
 		str strings.Builder
 		f   flag
 	)
-	size := len(b.format)
-	for i := 0; i < size; {
+	for i, z := 0, len(b.format); i < z; {
 		pos := i
-		for i < size && b.format[i] != '%' {
+		for i < z && b.format[i] != '%' {
 			i++
 		}
 		if i > pos {
 			str.WriteString(b.format[pos:i])
 		}
-		if i >= size {
+		if i >= z {
 			break
 		}
 		i++
-		j, err := f.Parse(b.format[i:])
-		if err != nil {
+		if j, err := f.Parse(b.format[i:]); err != nil {
 			return "", err
 		} else {
 			i += j
