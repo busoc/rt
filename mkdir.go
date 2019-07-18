@@ -48,7 +48,7 @@ func NewBuilder(str string) (Builder, error) {
 }
 
 func (b *Builder) Copy(r io.Reader, pid int, when time.Time) error {
-	w, err := b.Prepare(pid, when)
+	w, err := b.Open(pid, when)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,15 @@ func (b *Builder) Copy(r io.Reader, pid int, when time.Time) error {
 	return err
 }
 
-func (b *Builder) Prepare(pid int, when time.Time) (*os.File, error) {
+// func (b *Builder) MkdirAll(pid int, when time.Time) error {
+// 	p, err := b.prepare(pid, when)
+// 	dir, _ := filepath.Split(p)
+// 	if err := os.MkdirAll(dir, 0755); err != nil {
+// 		return nil, err
+// 	}
+// }
+
+func (b *Builder) Open(pid int, when time.Time) (*os.File, error) {
 	p, err := b.prepare(pid, when)
 	if err != nil {
 		return nil, err
@@ -65,7 +73,7 @@ func (b *Builder) Prepare(pid int, when time.Time) (*os.File, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
-	return os.Create(p)
+	return os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 }
 
 func (b *Builder) prepare(pid int, when time.Time) (string, error) {
