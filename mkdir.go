@@ -36,15 +36,28 @@ type Packet interface {
 // result:  /storage/archives/451/2019/199/08/rt_40_44.dat
 
 type Builder struct {
-	format string
+	format  string
+	version bool
+	files   map[string]uint32
 }
 
-func NewBuilder(str string) (Builder, error) {
-	b := Builder{format: str}
-	if len(b.format) == 0 {
+func NewBuilder(str string, version bool) (Builder, error) {
+	var b Builder
+	if len(str) == 0 {
 		return b, fmt.Errorf("empty string")
 	}
+	if ix := strings.IndexByte(str, '%'); ix < 0 {
+		return b, fmt.Errorf("no placeholder in string")
+	}
+	b.version = version
+	b.format = str
+	b.files = make(map[string]uint32)
+
 	return b, nil
+}
+
+func (b *Builder) String() string {
+	return b.format
 }
 
 func (b *Builder) Copy(r io.Reader, pid int, when time.Time) error {
@@ -52,27 +65,30 @@ func (b *Builder) Copy(r io.Reader, pid int, when time.Time) error {
 	if err != nil {
 		return err
 	}
+	defer w.Close()
+
 	_, err = io.Copy(w, r)
 	return err
 }
-
-// func (b *Builder) MkdirAll(pid int, when time.Time) error {
-// 	p, err := b.prepare(pid, when)
-// 	dir, _ := filepath.Split(p)
-// 	if err := os.MkdirAll(dir, 0755); err != nil {
-// 		return nil, err
-// 	}
-// }
 
 func (b *Builder) Open(pid int, when time.Time) (*os.File, error) {
 	p, err := b.prepare(pid, when)
 	if err != nil {
 		return nil, err
 	}
+
 	dir, _ := filepath.Split(p)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
+
+	if b.version {
+		if _, ok := b.files[p]; !ok {
+			b.files[p]++
+		}
+		p += fmt.Sprintf(".%d", b.files[p])
+	}
+
 	return os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 }
 
@@ -182,12 +198,17 @@ func (f *flag) Parse(str string) (int, error) {
 		for i < size && isDigit(str[i]) {
 			i++
 		}
-		// i++
-		x, err := strconv.Atoi(str[pos:i])
-		if err != nil {
-			return -1, err
+		if i > pos {
+			x, err := strconv.Atoi(str[pos:i])
+			if err != nil {
+				return -1, err
+			}
+			f.Offset = x
+		} else {
+			if f.Truncate > 0 {
+				f.Offset = f.Truncate - 1
+			}
 		}
-		f.Offset = x
 	}
 	return i, nil
 }
