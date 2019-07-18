@@ -89,7 +89,8 @@ func (b *Builder) Open(pid int, when time.Time) (*os.File, error) {
 		p = fmt.Sprintf("%s.%d", p, b.files[p])
 	}
 
-	return os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// return os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	return os.Create(p)
 }
 
 func (b *Builder) prepare(pid int, when time.Time) (string, error) {
