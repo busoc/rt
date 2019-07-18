@@ -2,9 +2,11 @@ package rt
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -14,100 +16,247 @@ type Packet interface {
 	Timestamp() time.Time
 }
 
-type MakeFunc func(Packet) (string, error)
+// specifications
+//
+// general form: %[options][A-Za-z][+offset]
+//
+// [x]Y[+offset]: year
+// [0][x]J[+offset]: day of year (optional 0 padding)
+// [0][x]M[+offset]: month (optional 0 padding)
+// [0][x]D[+offset]: day of month (optional 0 padding)
+// [0][x]h[+offset]: hour (optional 0 padding + truncating of x hours)
+// [0][x]m[+offset]: minute (optional 0 padding + truncating of x minutes)
+// [#]P: primary ID (optionally represented in hex)
+// [#]S: secondary ID (optionally represented in hex)
+//
+// eg:
+// pid  = 451
+// date = 2019-07-18 10:41:23
+// pattern: /storage/archives/%P/%Y/%J/%04h/rt_%05m_%05m+4.dat
+// result:  /storage/archives/451/2019/199/08/rt_40_44.dat
 
-func Make(base, format string) (MakeFunc, error) {
-	funcs, err := parseSpecifier(format)
+type Builder struct {
+	format string
+}
+
+func NewBuilder(str string) (Builder, error) {
+	b := Builder{format: str}
+	if len(b.format) == 0 {
+		return b, fmt.Errorf("empty string")
+	}
+	return b, nil
+}
+
+func (b *Builder) Copy(r io.Reader, pid int, when time.Time) error {
+	w, err := b.Prepare(pid, when)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(w, r)
+	return err
+}
+
+func (b *Builder) Prepare(pid int, when time.Time) (*os.File, error) {
+	p, err := b.prepare(pid, when)
 	if err != nil {
 		return nil, err
 	}
-	if len(funcs) == 0 {
-		return nil, fmt.Errorf("invalid format string: %s", format)
+	dir, _ := filepath.Split(p)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, err
 	}
-	return func(p Packet) (string, error) {
-		ps := []string{base}
-		for _, f := range funcs {
-			p := f(p.Pid(), p.Sid(), p.Timestamp())
-			if p == "" {
-				continue
-			}
-			ps = append(ps, p)
-		}
-		dir := filepath.Join(ps...)
-		return dir, os.MkdirAll(dir, 0755)
-	}, nil
+	return os.Create(p)
 }
 
-func parseSpecifier(str string) ([]func(int, int, time.Time) string, error) {
-	var funcs []func(int, int, time.Time) string
-	for i := 0; i < len(str); i++ {
-		if str[i] != '%' {
-			continue
+func (b *Builder) prepare(pid int, when time.Time) (string, error) {
+	var (
+		str strings.Builder
+		f   flag
+	)
+	size := len(b.format)
+	for i := 0; i < size; {
+		pos := i
+		for i < size && b.format[i] != '%' {
+			i++
+		}
+		if i > pos {
+			str.WriteString(b.format[pos:i])
+		}
+		if i >= size {
+			break
 		}
 		i++
-
-		var resolution int
-		if isDigit(str[i]) {
-			pos := i
-			for isDigit(str[i]) {
-				i++
-			}
-			x, err := strconv.Atoi(str[pos:i])
-			if err != nil {
-				return nil, err
-			}
-			resolution = x
+		j, err := f.Parse(b.format[i:])
+		if err != nil {
+			return "", err
+		} else {
+			i += j
 		}
-
-		var f func(int, int, time.Time) string
-		switch str[i] {
-		case 'Y':
-			f = func(_, _ int, w time.Time) string { return fmt.Sprintf("%04d", w.Year()) }
-		case 'M':
-			f = func(_, _ int, w time.Time) string { return fmt.Sprintf("%02d", w.Month()) }
-		case 'd':
-			f = func(_, _ int, w time.Time) string {
-				_, _, d := w.Date()
-				return fmt.Sprintf("%02d", d)
-			}
-		case 'D':
-			f = func(_, _ int, w time.Time) string { return fmt.Sprintf("%03d", w.YearDay()) }
-		case 'h':
-			f = func(_, _ int, w time.Time) string {
-				if resolution > 0 {
-					w = w.Truncate(time.Hour * time.Duration(resolution))
-				}
-				return fmt.Sprintf("%02d", w.Hour())
-			}
-		case 'm':
-			f = func(_, _ int, w time.Time) string {
-				if resolution > 0 {
-					w = w.Truncate(time.Minute * time.Duration(resolution))
-				}
-				return fmt.Sprintf("%02d", w.Minute())
-			}
-		case 'P':
-			f = func(a, _ int, w time.Time) string {
-				var str string
-				if a >= 0 {
-					str = strconv.Itoa(a)
-				}
-				return str
-			}
-		case 'S':
-			f = func(_, a int, w time.Time) string {
-				var str string
-				if a >= 0 {
-					str = strconv.Itoa(a)
-				}
-				return str
-			}
-		default:
-			return nil, fmt.Errorf("unknown specifier: %s", str[i-1:i+1])
+		if s := f.Format(pid, when); len(s) > 0 {
+			str.WriteString(s)
 		}
-		funcs = append(funcs, f)
+		f.Reset()
 	}
-	return funcs, nil
+	return str.String(), nil
+}
+
+type flag struct {
+	Padding  bool
+	Alter    bool
+	Truncate int
+	Offset   int
+
+	transform func(int, time.Time) string
+}
+
+func (f *flag) Reset() {
+	f.transform = nil
+	f.Padding = false
+	f.Alter = false
+	f.Truncate = 0
+	f.Offset = 0
+}
+
+func (f *flag) Format(i int, w time.Time) string {
+	return f.transform(i, w)
+}
+
+func (f *flag) Parse(str string) (int, error) {
+	var (
+		i      int
+		size   = len(str)
+		offset = true
+	)
+	if str[i] == '0' {
+		f.Padding = true
+		i++
+	}
+	if isDigit(str[i]) {
+		pos := i
+		for i < size && isDigit(str[i]) {
+			i++
+		}
+		x, err := strconv.Atoi(str[pos:i])
+		if err != nil {
+			return -1, err
+		}
+		f.Truncate = x
+	}
+	if str[i] == '#' {
+		i++
+		f.Alter = true
+	}
+
+	switch str[i] {
+	case 'P': // primary id
+		f.transform, offset = f.formatID, false
+	case 'S': // secondary id
+		f.transform, offset = f.formatID, false
+	case 'Y': // year
+		f.transform, offset = f.formatYear, false
+	case 'J': // day of year
+		f.transform = f.formatYearDay
+	case 'D': // day of month
+		f.transform = f.formatDay
+	case 'M': // month
+		f.transform = f.formatMonth
+	case 'h': // hour
+		f.transform = f.formatHour
+	case 'm': // minute
+		f.transform = f.formatMinute
+	default:
+		return -1, fmt.Errorf("unsupported verb %c", str[i])
+	}
+	i++
+	if offset && str[i] == '+' {
+		i++
+		pos := i
+		for i < size && isDigit(str[i]) {
+			i++
+		}
+		// i++
+		x, err := strconv.Atoi(str[pos:i])
+		if err != nil {
+			return -1, err
+		}
+		f.Offset = x
+	}
+	return i, nil
+}
+
+func (f *flag) formatID(i int, _ time.Time) string {
+	base := 10
+	if f.Alter {
+		base = 16
+	}
+	return strconv.FormatInt(int64(i), base)
+}
+
+func (f *flag) formatYear(_ int, w time.Time) string {
+	return fmt.Sprintf("%d", w.Year())
+}
+
+func (f *flag) formatYearDay(_ int, w time.Time) string {
+	pattern := "%d"
+	if f.Padding {
+		pattern = "%03d"
+	}
+	return fmt.Sprintf(pattern, w.YearDay())
+}
+
+func (f *flag) formatMonth(_ int, w time.Time) string {
+	if f.Alter {
+		return w.Month().String()
+	}
+	pattern := "%d"
+	if f.Padding {
+		pattern = "%02d"
+	}
+	return fmt.Sprintf(pattern, w.Month())
+}
+
+func (f *flag) formatDay(_ int, w time.Time) string {
+	pattern := "%d"
+	if f.Padding {
+		pattern = "%02d"
+	}
+	return fmt.Sprintf(pattern, w.Day())
+}
+
+func (f *flag) formatHour(_ int, w time.Time) string {
+	pattern := "%d"
+	if f.Padding {
+		pattern = "%02d"
+	}
+	var (
+		trunc = time.Duration(f.Truncate) * time.Hour
+		off   = time.Duration(f.Offset) * time.Hour
+	)
+	w = truncateTime(w, trunc, off)
+	return fmt.Sprintf(pattern, w.Hour())
+}
+
+func (f *flag) formatMinute(_ int, w time.Time) string {
+	pattern := "%d"
+	if f.Padding {
+		pattern = "%02d"
+	}
+	var (
+		trunc = time.Duration(f.Truncate) * time.Minute
+		off   = time.Duration(f.Offset) * time.Minute
+	)
+	w = truncateTime(w, trunc, off)
+	return fmt.Sprintf(pattern, w.Minute())
+}
+
+func truncateTime(w time.Time, t, o time.Duration) time.Time {
+	if t > 0 {
+		w = w.Truncate(t)
+	}
+	if o > 0 {
+		w = w.Add(o)
+	}
+	return w
 }
 
 func isDigit(b byte) bool {
