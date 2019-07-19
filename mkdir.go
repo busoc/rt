@@ -16,6 +16,10 @@ type Packet interface {
 	Timestamp() time.Time
 }
 
+type Marshaller interface {
+	Marshal() ([]byte, time.Time, error)
+}
+
 // specifications
 //
 // general form: %[options][A-Za-z][+offset]
