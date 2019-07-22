@@ -3,6 +3,7 @@ package rt
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,6 +21,118 @@ type Marshaller interface {
 	Marshal() ([]byte, time.Time, error)
 }
 
+type Sorter struct {
+	Pid int
+	Sid int
+	UPI string
+
+	marsh   Marshaller
+	builder Builder
+
+	interval time.Duration
+	file     *os.File
+	written  int
+
+	state struct {
+		Count   int
+		Skipped int
+		Size    int
+		Stamp   time.Time
+	}
+}
+
+func Sort(m Marshaller, p string, interval time.Duration) (*Sorter, error) {
+	if interval < Five {
+		interval = Five
+	}
+	s := Sorter{
+		interval: interval,
+		marsh:    m,
+	}
+	if b, err := NewBuilder(p, false); err != nil {
+		return nil, err
+	} else {
+		s.builder = b
+	}
+	if err := s.openFile(); err != nil {
+		return nil, err
+	}
+
+	return &s, nil
+}
+
+func (s *Sorter) Sort() error {
+	for {
+		switch buf, when, err := s.marsh.Marshal(); err {
+		case nil:
+			if err := s.rotateFile(when); err != nil {
+				return err
+			}
+			if n, err := s.file.Write(buf); err != nil {
+				s.state.Skipped++
+			} else {
+				s.written += n
+				s.state.Size += n
+				s.state.Count++
+			}
+		case io.EOF:
+			return s.moveFile(s.state.Stamp)
+		default:
+			if when.IsZero() {
+				return err
+			}
+			s.state.Skipped++
+		}
+	}
+}
+
+func (s *Sorter) rotateFile(w time.Time) error {
+	var err error
+	stamp := s.state.Stamp.Truncate(s.interval)
+	if !s.state.Stamp.IsZero() && w.Sub(stamp) >= s.interval {
+		if err = s.moveFile(s.state.Stamp); err != nil {
+			return err
+		}
+		err = s.openFile()
+	}
+	if s.state.Stamp.IsZero() || w.Sub(stamp) >= s.interval {
+		s.state.Stamp = w
+	}
+	return err
+}
+
+func (s *Sorter) openFile() error {
+	f, err := ioutil.TempFile(os.TempDir(), "rt_*.dat")
+	if err == nil {
+		s.file = f
+	}
+	return err
+}
+
+func (s *Sorter) moveFile(when time.Time) error {
+	if s.written == 0 {
+		return nil
+	}
+	defer s.file.Close()
+
+	_, err := s.file.Seek(0, io.SeekStart)
+	if err != nil {
+		return err
+	}
+
+	i := PacketInfo{
+		Pid:  s.Pid,
+		Sid:  s.Sid,
+		UPI:  s.UPI,
+		When: when,
+	}
+	if err = s.builder.Copy(s.file, i); err == nil {
+		s.written = 0
+		err = os.Remove(s.file.Name())
+	}
+	return err
+}
+
 // specifications
 //
 // general form: %[options][A-Za-z][+offset]
@@ -32,12 +145,20 @@ type Marshaller interface {
 // [0][x]m[+offset]: minute (optional 0 padding + truncating of x minutes)
 // [#]P: primary ID (optionally represented in hex)
 // [#]S: secondary ID (optionally represented in hex)
+// U: user provided information
 //
 // eg:
 // pid  = 451
 // date = 2019-07-18 10:41:23
 // pattern: /storage/archives/%P/%Y/%J/%04h/rt_%05m_%05m+4.dat
 // result:  /storage/archives/451/2019/199/08/rt_40_44.dat
+
+type PacketInfo struct {
+	Pid  int
+	Sid  int
+	When time.Time
+	UPI  string
+}
 
 type Builder struct {
 	format  string
@@ -64,8 +185,8 @@ func (b *Builder) String() string {
 	return b.format
 }
 
-func (b *Builder) Copy(r io.Reader, pid int, when time.Time) error {
-	w, err := b.Open(pid, when)
+func (b *Builder) Copy(r io.Reader, i PacketInfo) error {
+	w, err := b.Open(i)
 	if err != nil {
 		return err
 	}
@@ -75,8 +196,8 @@ func (b *Builder) Copy(r io.Reader, pid int, when time.Time) error {
 	return err
 }
 
-func (b *Builder) Open(pid int, when time.Time) (*os.File, error) {
-	p, err := b.prepare(pid, when)
+func (b *Builder) Open(i PacketInfo) (*os.File, error) {
+	p, err := b.prepare(i)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +218,7 @@ func (b *Builder) Open(pid int, when time.Time) (*os.File, error) {
 	return os.Create(p)
 }
 
-func (b *Builder) prepare(pid int, when time.Time) (string, error) {
+func (b *Builder) prepare(pi PacketInfo) (string, error) {
 	var (
 		str strings.Builder
 		f   flag
@@ -119,7 +240,7 @@ func (b *Builder) prepare(pid int, when time.Time) (string, error) {
 		} else {
 			i += j
 		}
-		if s := f.Format(pid, when); len(s) > 0 {
+		if s := f.Format(pi); len(s) > 0 {
 			str.WriteString(s)
 		}
 		f.Reset()
@@ -133,7 +254,7 @@ type flag struct {
 	Truncate int
 	Offset   int
 
-	transform func(int, time.Time) string
+	transform func(PacketInfo) string
 }
 
 func (f *flag) Reset() {
@@ -144,8 +265,8 @@ func (f *flag) Reset() {
 	f.Offset = 0
 }
 
-func (f *flag) Format(i int, w time.Time) string {
-	return f.transform(i, w)
+func (f *flag) Format(i PacketInfo) string {
+	return f.transform(i)
 }
 
 func (f *flag) Parse(str string) (int, error) {
@@ -175,6 +296,8 @@ func (f *flag) Parse(str string) (int, error) {
 	}
 
 	switch str[i] {
+	case 'U':
+		f.transform, offset = f.formatUPI, false
 	case 'P': // primary id
 		f.transform, offset = f.formatID, false
 	case 'S': // secondary id
@@ -216,46 +339,53 @@ func (f *flag) Parse(str string) (int, error) {
 	return i, nil
 }
 
-func (f *flag) formatID(i int, _ time.Time) string {
+func (f *flag) formatUPI(i PacketInfo) string {
+	return i.UPI
+}
+
+func (f *flag) formatID(i PacketInfo) string {
+	if i.Pid == 0 {
+		return ""
+	}
 	base := 10
 	if f.Alter {
 		base = 16
 	}
-	return strconv.FormatInt(int64(i), base)
+	return strconv.FormatInt(int64(i.Pid), base)
 }
 
-func (f *flag) formatYear(_ int, w time.Time) string {
-	return fmt.Sprintf("%d", w.Year())
+func (f *flag) formatYear(i PacketInfo) string {
+	return fmt.Sprintf("%d", i.When.Year())
 }
 
-func (f *flag) formatYearDay(_ int, w time.Time) string {
+func (f *flag) formatYearDay(i PacketInfo) string {
 	pattern := "%d"
 	if f.Padding {
 		pattern = "%03d"
 	}
-	return fmt.Sprintf(pattern, w.YearDay())
+	return fmt.Sprintf(pattern, i.When.YearDay())
 }
 
-func (f *flag) formatMonth(_ int, w time.Time) string {
+func (f *flag) formatMonth(i PacketInfo) string {
 	if f.Alter {
-		return w.Month().String()
+		return i.When.Month().String()
 	}
 	pattern := "%d"
 	if f.Padding {
 		pattern = "%02d"
 	}
-	return fmt.Sprintf(pattern, w.Month())
+	return fmt.Sprintf(pattern, i.When.Month())
 }
 
-func (f *flag) formatDay(_ int, w time.Time) string {
+func (f *flag) formatDay(i PacketInfo) string {
 	pattern := "%d"
 	if f.Padding {
 		pattern = "%02d"
 	}
-	return fmt.Sprintf(pattern, w.Day())
+	return fmt.Sprintf(pattern, i.When.Day())
 }
 
-func (f *flag) formatHour(_ int, w time.Time) string {
+func (f *flag) formatHour(i PacketInfo) string {
 	pattern := "%d"
 	if f.Padding {
 		pattern = "%02d"
@@ -264,11 +394,11 @@ func (f *flag) formatHour(_ int, w time.Time) string {
 		trunc = time.Duration(f.Truncate) * time.Hour
 		off   = time.Duration(f.Offset) * time.Hour
 	)
-	w = truncateTime(w, trunc, off)
+	w := truncateTime(i.When, trunc, off)
 	return fmt.Sprintf(pattern, w.Hour())
 }
 
-func (f *flag) formatMinute(_ int, w time.Time) string {
+func (f *flag) formatMinute(i PacketInfo) string {
 	pattern := "%d"
 	if f.Padding {
 		pattern = "%02d"
@@ -277,7 +407,7 @@ func (f *flag) formatMinute(_ int, w time.Time) string {
 		trunc = time.Duration(f.Truncate) * time.Minute
 		off   = time.Duration(f.Offset) * time.Minute
 	)
-	w = truncateTime(w, trunc, off)
+	w := truncateTime(i.When, trunc, off)
 	return fmt.Sprintf(pattern, w.Minute())
 }
 
