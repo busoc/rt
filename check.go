@@ -1,6 +1,7 @@
 package rt
 
 import (
+	// "crypto/md5"
 	"io"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/midbel/linewriter"
+	"github.com/midbel/xxh"
 )
 
 const (
@@ -19,6 +21,7 @@ type state struct {
 	Packets int64
 	Size    int64
 	Err     error
+	Sum     uint64
 
 	File    string
 	Bytes   int64
@@ -66,10 +69,18 @@ func (d *Dumper) Dump(w io.Writer, file string) error {
 		if i.IsDir() {
 			return nil
 		}
+		switch filepath.Ext(p) {
+		case ".dat", ".bin":
+		default:
+			return nil
+		}
 		s, err := checkFile(buf, p, i)
 		if err == nil {
 			if d.strip {
 				s.File = strings.TrimPrefix(p, file)
+				if s.File == "" {
+					s.File = filepath.Base(p)
+				}
 			}
 			d.dumpState(w, s)
 		}
@@ -109,6 +120,7 @@ func (d *Dumper) dumpState(w io.Writer, s state) {
 	}
 	d.line.AppendTime(s.LastMod, "2006-01-02 15:04:05", linewriter.AlignRight)
 	d.line.AppendInt(s.Packets, 9, linewriter.AlignRight)
+	d.line.AppendUint(s.Sum, 0, linewriter.AlignRight|linewriter.Hex|linewriter.WithZero)
 	d.line.AppendString(s.File, 0, linewriter.AlignLeft)
 
 	io.Copy(w, d.line)
@@ -127,7 +139,8 @@ func checkFile(buf []byte, p string, i os.FileInfo) (state, error) {
 	s.Bytes = i.Size()
 	s.File = p
 
-	rs := NewReader(r)
+	digest := xxh.New64(0)
+	rs := NewReader(io.TeeReader(r, digest))
 	for {
 		n, err := rs.Read(buf)
 		if n > 0 {
@@ -141,5 +154,6 @@ func checkFile(buf []byte, p string, i os.FileInfo) (state, error) {
 		}
 		s.Packets++
 	}
+	s.Sum = digest.Sum64()
 	return s, nil
 }
