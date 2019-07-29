@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/midbel/linewriter"
@@ -25,6 +26,7 @@ type state struct {
 }
 
 type Dumper struct {
+	strip   bool
 	invalid bool
 	csv     bool
 	pretty  bool
@@ -35,7 +37,7 @@ type Dumper struct {
 	Files int
 }
 
-func Dump(csv, invalid, pretty bool) *Dumper {
+func Dump(csv, strip, invalid, pretty bool) *Dumper {
 	var options []linewriter.Option
 	if csv {
 		options = append(options, linewriter.AsCSV(true))
@@ -46,6 +48,7 @@ func Dump(csv, invalid, pretty bool) *Dumper {
 		}
 	}
 	d := Dumper{
+		strip:   strip,
 		pretty:  pretty,
 		invalid: invalid,
 		csv:     csv,
@@ -65,6 +68,9 @@ func (d *Dumper) Dump(w io.Writer, file string) error {
 		}
 		s, err := checkFile(buf, p, i)
 		if err == nil {
+			if d.strip {
+				s.File = strings.TrimPrefix(p, file)
+			}
 			d.dumpState(w, s)
 		}
 		return err
