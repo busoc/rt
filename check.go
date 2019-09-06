@@ -120,7 +120,7 @@ func (d *Dumper) dumpState(w io.Writer, s state) {
 	}
 	d.line.AppendTime(s.LastMod, "2006-01-02 15:04:05", linewriter.AlignRight)
 	d.line.AppendInt(s.Packets, 9, linewriter.AlignRight)
-	d.line.AppendUint(s.Sum, 0, linewriter.AlignRight|linewriter.Hex|linewriter.WithZero)
+	d.line.AppendUint(s.Sum, 16, linewriter.AlignRight|linewriter.Hex|linewriter.WithZero)
 	d.line.AppendString(s.File, 0, linewriter.AlignLeft)
 
 	io.Copy(w, d.line)
