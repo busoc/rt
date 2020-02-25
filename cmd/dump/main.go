@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 
 	"github.com/busoc/rt"
@@ -95,7 +96,7 @@ func decodeBytes(d *dissect.Decoder, buf []byte) (int, error) {
 			raw, pos = v.Raw, v.Pos
 			eng = raw
 		}
-		fmt.Printf("%6d |  %16s | %32v | %32v\n", pos, v, raw, eng)
+		fmt.Fprintf(ioutil.Discard, "%6d | %6d |  %16s | %32v | %32v\n", pos/8, pos, v, raw, eng)
 	}
 	return len(values), nil
 }
